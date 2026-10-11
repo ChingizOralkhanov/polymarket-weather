@@ -22,7 +22,12 @@ public sealed class ObservationsBackfill(IemClient iem, WeatherDb db, ILogger<Ob
         {
             if (!await db.HasStationAsync(stationId, ct))
             {
-                var info = await iem.GetStationAsync(stationId, ct);
+                // Some US stations are only indexed by their FAA id ("DAL" for KDAL).
+                var info = await WithRetryAsync(() => iem.GetStationAsync(stationId, ct), ct);
+                if (info is null && stationId.Length == 4 && stationId[0] == 'K')
+                    info = (await WithRetryAsync(() => iem.GetStationAsync(stationId[1..], ct), ct)) is { } faa
+                        ? faa with { StationId = stationId }
+                        : null;
                 await Task.Delay(RequestDelay, ct);
                 if (info is null)
                 {
@@ -40,13 +45,29 @@ public sealed class ObservationsBackfill(IemClient iem, WeatherDb db, ILogger<Ob
                 continue;
             var from = lastDay ?? fromDate.AddDays(-1);
 
-            var observations = await iem.GetMetarsAsync(stationId, from, to, ct);
+            var observations = await WithRetryAsync(() => iem.GetMetarsAsync(stationId, from, to, ct), ct);
             await Task.Delay(RequestDelay, ct);
             await db.SaveObservationsAsync(stationId, observations, ct);
             logger.LogInformation("{Station}: {Count} METARs {From}..{To}", stationId, observations.Count, from, to);
         }
 
         logger.LogInformation("Done");
+    }
+
+    private async Task<T> WithRetryAsync<T>(Func<Task<T>> action, CancellationToken ct)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await action();
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException && attempt < 4 && !ct.IsCancellationRequested)
+            {
+                logger.LogWarning("IEM request failed ({Message}), retry {Attempt}", ex.Message, attempt);
+                await Task.Delay(TimeSpan.FromSeconds(30 * attempt), ct);
+            }
+        }
     }
 
     private static DateOnly Min(DateOnly a, DateOnly b) => a < b ? a : b;

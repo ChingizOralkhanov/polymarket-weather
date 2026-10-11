@@ -29,8 +29,9 @@ public sealed class PricesBackfill(ClobClient clob, WeatherDb db, ILogger<Prices
                 await db.SavePricesAsync(p.MarketId, fidelityMinutes, history.Select(h => (h.Time.ToUnixTimeSeconds(), h.Price)).ToList(), token);
                 Interlocked.Add(ref points, history.Count);
             }
-            catch (HttpRequestException ex)
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !token.IsCancellationRequested)
             {
+                // Left out of price_fetches, so the next run retries it.
                 logger.LogWarning("Market {MarketId}: {Message}", p.MarketId, ex.Message);
             }
 
