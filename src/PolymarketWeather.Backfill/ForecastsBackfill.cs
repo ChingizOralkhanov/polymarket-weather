@@ -50,6 +50,8 @@ public sealed class ForecastsBackfill(OpenMeteoClient openMeteo, WeatherDb db, I
                     continue;
 
                 var hourly = await FetchWithRetryAsync(station, model, start.AddDays(-1), to.AddDays(1), ct);
+                if (hourly is null)
+                    continue;
                 var rows = Aggregate(station.StationId, model, tz, hourly, start, to);
                 await db.SaveForecastDailyAsync(rows, ct);
                 logger.LogInformation("{Station} {Model}: {Rows} daily rows {From}..{To}", station.StationId, model, rows.Count, start, to);
@@ -60,18 +62,30 @@ public sealed class ForecastsBackfill(OpenMeteoClient openMeteo, WeatherDb db, I
         logger.LogInformation("Done");
     }
 
-    private async Task<IReadOnlyDictionary<int, IReadOnlyList<HourlyForecast>>> FetchWithRetryAsync(
+    /// <summary>Retries transient failures with growing pauses; returns null when the model is skipped for this station.</summary>
+    private async Task<IReadOnlyDictionary<int, IReadOnlyList<HourlyForecast>>?> FetchWithRetryAsync(
         StationInfo station, string model, DateOnly from, DateOnly to, CancellationToken ct)
     {
+        const int maxAttempts = 5;
         for (var attempt = 1; ; attempt++)
         {
             try
             {
                 return await openMeteo.GetPreviousRunsAsync(station.Latitude, station.Longitude, model, Leads, from, to, ct);
             }
-            catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.TooManyRequests && attempt < 5)
+            catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.BadRequest)
             {
-                logger.LogWarning("Rate limited on {Station} {Model}, waiting", station.StationId, model);
+                logger.LogWarning("{Station} {Model}: skipped, {Message}", station.StationId, model, ex.Message);
+                return null;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+            {
+                if (attempt == maxAttempts)
+                {
+                    logger.LogWarning("{Station} {Model}: skipped after {Attempts} attempts, {Message}", station.StationId, model, attempt, ex.Message);
+                    return null;
+                }
+                logger.LogWarning("{Station} {Model}: attempt {Attempt} failed ({Message}), waiting", station.StationId, model, attempt, ex.Message);
                 await Task.Delay(TimeSpan.FromMinutes(attempt * 2), ct);
             }
         }

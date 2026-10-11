@@ -23,8 +23,22 @@ public sealed class OpenMeteoClient(HttpClient http)
                   + $"&hourly={string.Join(',', variables)}&models={Uri.EscapeDataString(model)}"
                   + $"&start_date={from:yyyy-MM-dd}&end_date={to:yyyy-MM-dd}&timezone=UTC";
 
-        using var doc = await http.GetFromJsonAsync<JsonDocument>(url, ct)
-                        ?? throw new InvalidOperationException("Empty Open-Meteo response");
+        using var response = await http.GetAsync(url, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException($"Open-Meteo {(int)response.StatusCode}: {Truncate(body)}", null, response.StatusCode);
+
+        JsonDocument doc;
+        try
+        {
+            doc = JsonDocument.Parse(body);
+        }
+        catch (JsonException)
+        {
+            // Overload and quota errors sometimes come back as plain text with a 200.
+            throw new HttpRequestException($"Open-Meteo returned non-JSON: {Truncate(body)}");
+        }
+        using var _ = doc;
         var hourly = doc.RootElement.GetProperty("hourly");
         var times = hourly.GetProperty("time").EnumerateArray()
             .Select(t => new DateTimeOffset(DateTime.SpecifyKind(DateTime.Parse(t.GetString()!, CultureInfo.InvariantCulture), DateTimeKind.Utc)))
@@ -41,6 +55,8 @@ public sealed class OpenMeteoClient(HttpClient http)
         }
         return result;
     }
+
+    private static string Truncate(string s) => s.Length <= 200 ? s : s[..200];
 
     private static string VariableName(int lead) => lead == 0 ? "temperature_2m" : $"temperature_2m_previous_day{lead}";
 }
