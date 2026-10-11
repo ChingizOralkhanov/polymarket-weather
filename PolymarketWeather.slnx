@@ -3,4 +3,7 @@
     <Project Path="src/PolymarketWeather.Collector/PolymarketWeather.Collector.csproj" />
     <Project Path="src/PolymarketWeather.Core/PolymarketWeather.Core.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PolymarketWeather.Core.Tests/PolymarketWeather.Core.Tests.csproj" />
+  </Folder>
 </Solution>
