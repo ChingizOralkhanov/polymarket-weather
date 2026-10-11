@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PolymarketWeather.Collector/PolymarketWeather.Collector.csproj" />
+    <Project Path="src/PolymarketWeather.Core/PolymarketWeather.Core.csproj" />
+  </Folder>
+</Solution>
