@@ -1,6 +1,8 @@
+using System.Globalization;
 using Dapper;
 using Microsoft.Data.Sqlite;
 using PolymarketWeather.Core.Markets;
+using PolymarketWeather.Core.Observations;
 
 namespace PolymarketWeather.Core.Storage;
 
@@ -55,6 +57,36 @@ public sealed class WeatherDb(string connectionString)
             fidelity   INTEGER NOT NULL,
             points     INTEGER NOT NULL,
             fetched_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS stations (
+            station_id TEXT PRIMARY KEY,
+            name       TEXT NOT NULL,
+            latitude   REAL NOT NULL,
+            longitude  REAL NOT NULL,
+            elevation  REAL,
+            time_zone  TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS observations (
+            station_id TEXT NOT NULL,
+            ts         INTEGER NOT NULL,
+            temp_c     REAL,
+            temp_f     REAL,
+            metar      TEXT,
+            PRIMARY KEY (station_id, ts)
+        );
+
+        -- Daily extremes over the station's local day, from hourly values of a model run made lead_days earlier.
+        CREATE TABLE IF NOT EXISTS forecast_daily (
+            station_id TEXT NOT NULL,
+            model      TEXT NOT NULL,
+            lead_days  INTEGER NOT NULL,
+            date       TEXT NOT NULL,
+            tmax_c     REAL,
+            tmin_c     REAL,
+            hours      INTEGER NOT NULL,
+            PRIMARY KEY (station_id, model, lead_days, date)
         );
 
         CREATE TABLE IF NOT EXISTS skipped_events (
@@ -206,6 +238,112 @@ public sealed class WeatherDb(string connectionString)
             Points = points.Count,
             FetchedAt = DateTimeOffset.UtcNow.ToString("O"),
         }, tx, cancellationToken: ct));
+        await tx.CommitAsync(ct);
+    }
+
+    /// <summary>METAR stations used for resolution, with the date span their events cover.</summary>
+    public async Task<IReadOnlyList<(string StationId, DateOnly From, DateOnly To)>> GetResolutionStationsAsync(CancellationToken ct = default)
+    {
+        const string sql = """
+            SELECT station_id AS StationId, MIN(date) AS FromDate, MAX(date) AS ToDate
+            FROM events
+            WHERE station_id IS NOT NULL AND source_kind IN ('NoaaTimeseries', 'WeatherUnderground')
+            GROUP BY station_id
+            ORDER BY station_id
+            """;
+        await using var conn = await OpenAsync(ct);
+        var rows = await conn.QueryAsync<(string StationId, string FromDate, string ToDate)>(new CommandDefinition(sql, cancellationToken: ct));
+        return rows.Select(r => (r.StationId, DateOnly.Parse(r.FromDate), DateOnly.Parse(r.ToDate))).ToList();
+    }
+
+    public async Task<bool> HasStationAsync(string stationId, CancellationToken ct = default)
+    {
+        await using var conn = await OpenAsync(ct);
+        return await conn.ExecuteScalarAsync<long>(new CommandDefinition(
+            "SELECT COUNT(*) FROM stations WHERE station_id = @stationId", new { stationId }, cancellationToken: ct)) > 0;
+    }
+
+    public async Task UpsertStationAsync(StationInfo s, CancellationToken ct = default)
+    {
+        const string sql = """
+            INSERT INTO stations (station_id, name, latitude, longitude, elevation, time_zone)
+            VALUES (@StationId, @Name, @Latitude, @Longitude, @Elevation, @TimeZone)
+            ON CONFLICT (station_id) DO UPDATE SET name = excluded.name, latitude = excluded.latitude,
+                longitude = excluded.longitude, elevation = excluded.elevation, time_zone = excluded.time_zone;
+            """;
+        await using var conn = await OpenAsync(ct);
+        await conn.ExecuteAsync(new CommandDefinition(sql, s, cancellationToken: ct));
+    }
+
+    /// <summary>Latest stored observation time for a station, or null if none.</summary>
+    public async Task<DateTimeOffset?> GetLastObservationAsync(string stationId, CancellationToken ct = default)
+    {
+        await using var conn = await OpenAsync(ct);
+        var ts = await conn.ExecuteScalarAsync<long?>(new CommandDefinition(
+            "SELECT MAX(ts) FROM observations WHERE station_id = @stationId", new { stationId }, cancellationToken: ct));
+        return ts is null ? null : DateTimeOffset.FromUnixTimeSeconds(ts.Value);
+    }
+
+    public async Task SaveObservationsAsync(string stationId, IReadOnlyList<MetarObservation> observations, CancellationToken ct = default)
+    {
+        const string sql = """
+            INSERT INTO observations (station_id, ts, temp_c, temp_f, metar)
+            VALUES (@StationId, @Ts, @TempC, @TempF, @Metar)
+            ON CONFLICT (station_id, ts) DO UPDATE SET temp_c = excluded.temp_c, temp_f = excluded.temp_f, metar = excluded.metar;
+            """;
+        await using var conn = await OpenAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+        await conn.ExecuteAsync(new CommandDefinition(sql, observations.Select(o => new
+        {
+            StationId = stationId,
+            Ts = o.Time.ToUnixTimeSeconds(),
+            o.TempC,
+            o.TempF,
+            o.Metar,
+        }), tx, cancellationToken: ct));
+        await tx.CommitAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<StationInfo>> GetStationsAsync(CancellationToken ct = default)
+    {
+        const string sql = """
+            SELECT station_id AS StationId, name AS Name, latitude AS Latitude, longitude AS Longitude,
+                   elevation AS Elevation, time_zone AS TimeZone
+            FROM stations ORDER BY station_id
+            """;
+        await using var conn = await OpenAsync(ct);
+        return (await conn.QueryAsync<StationInfo>(new CommandDefinition(sql, cancellationToken: ct))).ToList();
+    }
+
+    public async Task<DateOnly?> GetLastForecastDateAsync(string stationId, string model, CancellationToken ct = default)
+    {
+        await using var conn = await OpenAsync(ct);
+        var date = await conn.ExecuteScalarAsync<string?>(new CommandDefinition(
+            "SELECT MAX(date) FROM forecast_daily WHERE station_id = @stationId AND model = @model",
+            new { stationId, model }, cancellationToken: ct));
+        return date is null ? null : DateOnly.Parse(date, CultureInfo.InvariantCulture);
+    }
+
+    public async Task SaveForecastDailyAsync(IEnumerable<ForecastDaily> rows, CancellationToken ct = default)
+    {
+        const string sql = """
+            INSERT INTO forecast_daily (station_id, model, lead_days, date, tmax_c, tmin_c, hours)
+            VALUES (@StationId, @Model, @LeadDays, @Date, @TmaxC, @TminC, @Hours)
+            ON CONFLICT (station_id, model, lead_days, date) DO UPDATE SET
+                tmax_c = excluded.tmax_c, tmin_c = excluded.tmin_c, hours = excluded.hours;
+            """;
+        await using var conn = await OpenAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+        await conn.ExecuteAsync(new CommandDefinition(sql, rows.Select(r => new
+        {
+            r.StationId,
+            r.Model,
+            r.LeadDays,
+            Date = r.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            r.TmaxC,
+            r.TminC,
+            r.Hours,
+        }), tx, cancellationToken: ct));
         await tx.CommitAsync(ct);
     }
 
