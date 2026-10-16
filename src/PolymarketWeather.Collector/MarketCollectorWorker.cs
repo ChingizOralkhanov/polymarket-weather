@@ -1,51 +1,63 @@
 using Microsoft.Extensions.Options;
 using PolymarketWeather.Core.Markets;
 using PolymarketWeather.Core.Polymarket.Gamma;
+using PolymarketWeather.Core.Storage;
 
 namespace PolymarketWeather.Collector;
 
+/// <summary>Keeps open weather and post-count events in the database, and closes the ones that have resolved.</summary>
 public sealed class MarketCollectorWorker(
     GammaClient gamma,
+    WeatherDb db,
     IOptions<CollectorOptions> options,
-    ILogger<MarketCollectorWorker> logger) : BackgroundService
+    ILogger<MarketCollectorWorker> logger) : PeriodicWorker(logger)
 {
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    private const int MaxStaleRefreshPerCycle = 100;
+
+    protected override TimeSpan Interval => options.Value.MarketsInterval;
+
+    protected override async Task RunOnceAsync(CancellationToken ct)
     {
-        using var timer = new PeriodicTimer(options.Value.Interval);
-        do
+        var weather = await gamma.GetOpenEventsByTagAsync(GammaClient.DailyTemperatureTag, ct);
+        var count = new List<GammaEvent>();
+        foreach (var seriesId in options.Value.CountSeriesIds)
+            count.AddRange(await gamma.GetEventsBySeriesAsync(seriesId, closed: false, ct));
+
+        // Events that left the open list keep closed = 0 until refreshed one by one.
+        var openSlugs = weather.Concat(count).Select(e => e.Slug).ToHashSet();
+        var stale = (await db.GetOpenEventSlugsAsync(ct)).Where(s => !openSlugs.Contains(s)).Take(MaxStaleRefreshPerCycle).ToList();
+        foreach (var slug in stale)
         {
-            try
-            {
-                await CollectOnceAsync(stoppingToken);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                logger.LogError(ex, "Collection cycle failed");
-            }
+            var ev = await gamma.GetEventBySlugAsync(slug, ct);
+            if (ev is null)
+                continue;
+            if (ev.Slug.Contains("temperature", StringComparison.Ordinal))
+                weather = [.. weather, ev];
+            else
+                count.Add(ev);
         }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
+
+        var weatherParsed = Parse(weather, (GammaEvent e, out TemperatureEvent? r, out string? err) => TemperatureMarketParser.TryParse(e, out r, out err));
+        var countParsed = Parse(count, (GammaEvent e, out CountEvent? r, out string? err) => CountMarketParser.TryParse(e, out r, out err));
+        await db.UpsertEventsAsync(weatherParsed, ct);
+        await db.UpsertCountEventsAsync(countParsed, ct);
+
+        logger.LogInformation("Markets: {Weather} weather, {Count} post-count events stored, {Stale} refreshed after leaving the open list",
+            weatherParsed.Count, countParsed.Count, stale.Count);
     }
 
-    private async Task CollectOnceAsync(CancellationToken ct)
+    private delegate bool TryParser<T>(GammaEvent ev, out T? result, out string? error);
+
+    private List<T> Parse<T>(IEnumerable<GammaEvent> events, TryParser<T> tryParse) where T : class
     {
-        var events = await gamma.GetOpenEventsByTagAsync(GammaClient.DailyTemperatureTag, ct);
-
-        var parsed = new List<TemperatureEvent>(events.Count);
-        foreach (var ev in events)
+        var result = new List<T>();
+        foreach (var ev in events.DistinctBy(e => e.Id))
         {
-            if (TemperatureMarketParser.TryParse(ev, out var te, out var error))
-                parsed.Add(te!);
+            if (tryParse(ev, out var parsed, out var error))
+                result.Add(parsed!);
             else
-                logger.LogWarning("Skipped event {Slug}: {Error}", ev.Slug, error);
+                logger.LogDebug("Skipped {Slug}: {Error}", ev.Slug, error);
         }
-
-        logger.LogInformation(
-            "Fetched {Total} temperature events, parsed {Parsed} ({Max} max / {Min} min), {Buckets} buckets, unknown source: {Unknown}",
-            events.Count,
-            parsed.Count,
-            parsed.Count(e => e.Kind == TemperatureKind.Max),
-            parsed.Count(e => e.Kind == TemperatureKind.Min),
-            parsed.Sum(e => e.Buckets.Count),
-            parsed.Count(e => e.SourceKind == ResolutionSourceKind.Unknown));
+        return result;
     }
 }

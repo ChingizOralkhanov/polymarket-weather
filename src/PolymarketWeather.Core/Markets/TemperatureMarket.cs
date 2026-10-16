@@ -23,15 +23,16 @@ public sealed record TemperatureEvent(
     bool Closed,
     decimal? Volume,
     string? Description,
-    IReadOnlyList<TemperatureBucket> Buckets)
+    IReadOnlyList<RangeBucket> Buckets)
 {
-    public TemperatureBucket? WinningBucket => Buckets.SingleOrDefault(b => b.Outcome == BucketOutcome.Yes);
+    public RangeBucket? WinningBucket => Buckets.SingleOrDefault(b => b.Outcome == BucketOutcome.Yes);
 }
 
 /// <summary>
-/// Inclusive range in whole degrees of the event unit; a null bound means open-ended ("or below" / "or higher").
+/// One outcome market of a range event: inclusive bounds in whole units (degrees, posts);
+/// a null bound means open-ended ("or below", "500+").
 /// </summary>
-public sealed record TemperatureBucket(
+public sealed record RangeBucket(
     string MarketId,
     string ConditionId,
     string YesTokenId,

@@ -52,7 +52,7 @@ public static partial class TemperatureMarketParser
             : TemperatureUnit.Celsius;
         var (sourceKind, stationId) = ParseSource(description, ev.ResolutionSource);
 
-        var buckets = new List<TemperatureBucket>(ev.Markets.Count);
+        var buckets = new List<RangeBucket>(ev.Markets.Count);
         foreach (var m in ev.Markets.OrderBy(m => int.TryParse(m.GroupItemThreshold, out var t) ? t : int.MaxValue))
         {
             if (!TryParseBucket(m, out var bucket, out error))
@@ -107,7 +107,7 @@ public static partial class TemperatureMarketParser
         return true;
     }
 
-    private static bool TryParseBucket(GammaMarket m, out TemperatureBucket? bucket, out string? error)
+    private static bool TryParseBucket(GammaMarket m, out RangeBucket? bucket, out string? error)
     {
         bucket = null;
         var label = m.GroupItemTitle ?? "";
@@ -117,45 +117,7 @@ public static partial class TemperatureMarketParser
             return false;
         }
 
-        var outcomes = DeserializeStringArray(m.OutcomesJson);
-        var tokens = DeserializeStringArray(m.ClobTokenIdsJson);
-        var yes = outcomes.FindIndex(o => o.Equals("Yes", StringComparison.OrdinalIgnoreCase));
-        var no = outcomes.FindIndex(o => o.Equals("No", StringComparison.OrdinalIgnoreCase));
-        if (yes < 0 || no < 0 || tokens.Count != outcomes.Count)
-        {
-            error = $"unexpected outcomes/tokens for market {m.Id}";
-            return false;
-        }
-
-        bucket = new TemperatureBucket(
-            m.Id,
-            m.ConditionId,
-            tokens[yes],
-            tokens[no],
-            label,
-            lower,
-            upper,
-            ParseOutcome(m, yes),
-            ParseClosedTime(m.ClosedTime));
-        error = null;
-        return true;
-    }
-
-    private static BucketOutcome ParseOutcome(GammaMarket m, int yesIndex)
-    {
-        if (!string.Equals(m.UmaResolutionStatus, "resolved", StringComparison.OrdinalIgnoreCase))
-            return BucketOutcome.Unresolved;
-
-        var prices = DeserializeStringArray(m.OutcomePricesJson);
-        if (prices.Count <= yesIndex)
-            return BucketOutcome.Unresolved;
-
-        return prices[yesIndex] switch
-        {
-            "1" => BucketOutcome.Yes,
-            "0" => BucketOutcome.No,
-            _ => BucketOutcome.Unresolved,
-        };
+        return RangeBucketFactory.TryCreate(m, label, lower, upper, out bucket, out error);
     }
 
     private static (ResolutionSourceKind, string?) ParseSource(string description, string? resolutionSource)
@@ -208,12 +170,6 @@ public static partial class TemperatureMarketParser
         return true;
     }
 
-    private static DateTimeOffset? ParseClosedTime(string? value) =>
-        DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var t) ? t : null;
-
     private static int ParseInt(string s) =>
         int.Parse(s.Replace('−', '-'), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture);
-
-    private static List<string> DeserializeStringArray(string? json) =>
-        string.IsNullOrWhiteSpace(json) ? [] : JsonSerializer.Deserialize<List<string>>(json) ?? [];
 }

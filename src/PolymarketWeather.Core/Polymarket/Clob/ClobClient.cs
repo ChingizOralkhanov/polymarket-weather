@@ -22,6 +22,14 @@ public sealed class ClobClient(HttpClient http)
         return response?.History.Select(p => new PricePoint(DateTimeOffset.FromUnixTimeSeconds(p.T), p.P)).ToList() ?? [];
     }
 
+    /// <summary>Order books for many tokens in one request; tokens of closed markets are omitted from the response.</summary>
+    public async Task<IReadOnlyList<OrderBook>> GetBooksAsync(IReadOnlyCollection<string> tokenIds, CancellationToken ct = default)
+    {
+        using var response = await http.PostAsJsonAsync("books", tokenIds.Select(t => new { token_id = t }), ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<List<OrderBook>>(ct) ?? [];
+    }
+
     private sealed class PriceHistoryResponse
     {
         [JsonPropertyName("history")] public List<RawPoint> History { get; init; } = [];

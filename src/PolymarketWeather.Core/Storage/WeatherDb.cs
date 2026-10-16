@@ -6,7 +6,7 @@ using PolymarketWeather.Core.Observations;
 
 namespace PolymarketWeather.Core.Storage;
 
-public sealed class WeatherDb(string connectionString)
+public sealed partial class WeatherDb(string connectionString)
 {
     private const string Schema = """
         CREATE TABLE IF NOT EXISTS events (
@@ -130,7 +130,10 @@ public sealed class WeatherDb(string connectionString)
     public async Task EnsureSchemaAsync(CancellationToken ct = default)
     {
         await using var conn = await OpenAsync(ct);
+        // WAL lets several collectors write while analysis reads.
+        await conn.ExecuteAsync(new CommandDefinition("PRAGMA journal_mode=WAL;", cancellationToken: ct));
         await conn.ExecuteAsync(new CommandDefinition(Schema, cancellationToken: ct));
+        await conn.ExecuteAsync(new CommandDefinition(LiveSchema, cancellationToken: ct));
     }
 
     public async Task UpsertEventsAsync(IEnumerable<TemperatureEvent> events, CancellationToken ct = default)
