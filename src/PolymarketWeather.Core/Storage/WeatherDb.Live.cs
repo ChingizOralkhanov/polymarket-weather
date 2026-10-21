@@ -1,5 +1,4 @@
-using System.Globalization;
-using Dapper;
+using Microsoft.EntityFrameworkCore;
 using PolymarketWeather.Core.Markets;
 using PolymarketWeather.Core.Musk;
 using PolymarketWeather.Core.Observations;
@@ -22,206 +21,106 @@ public sealed record BookToken(string TokenId, string MarketId);
 /// <summary>Tables written by the live collectors: post-count markets, posts, order books, live METARs.</summary>
 public sealed partial class WeatherDb
 {
-    private const string LiveSchema = """
-        CREATE TABLE IF NOT EXISTS count_events (
-            event_id          TEXT PRIMARY KEY,
-            slug              TEXT NOT NULL UNIQUE,
-            series_id         TEXT,
-            title             TEXT NOT NULL,
-            created_at        TEXT,
-            end_date          TEXT,
-            closed            INTEGER NOT NULL,
-            volume            REAL,
-            winning_market_id TEXT,
-            description       TEXT,
-            updated_at        TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS count_buckets (
-            market_id    TEXT PRIMARY KEY,
-            event_id     TEXT NOT NULL,
-            position     INTEGER NOT NULL,
-            condition_id TEXT NOT NULL,
-            yes_token_id TEXT NOT NULL,
-            no_token_id  TEXT NOT NULL,
-            label        TEXT NOT NULL,
-            lower        INTEGER,
-            upper        INTEGER,
-            outcome      TEXT NOT NULL,
-            closed_time  TEXT
-        );
-        CREATE INDEX IF NOT EXISTS ix_count_buckets_event ON count_buckets (event_id);
-
-        -- Counting windows of xtracker; market_slug links a window to its count_events row.
-        CREATE TABLE IF NOT EXISTS trackings (
-            tracking_id  TEXT PRIMARY KEY,
-            handle       TEXT NOT NULL,
-            title        TEXT NOT NULL,
-            period_start TEXT NOT NULL,
-            period_end   TEXT NOT NULL,
-            market_slug  TEXT,
-            is_active    INTEGER NOT NULL
-        );
-
-        -- collected_at is when we saw the post, to compare with imported_at (when xtracker counted it).
-        CREATE TABLE IF NOT EXISTS posts (
-            platform_id  TEXT PRIMARY KEY,
-            handle       TEXT NOT NULL,
-            created_at   TEXT NOT NULL,
-            imported_at  TEXT,
-            collected_at TEXT NOT NULL,
-            content      TEXT
-        );
-        CREATE INDEX IF NOT EXISTS ix_posts_handle_created ON posts (handle, created_at);
-
-        -- Top of book per outcome token, written only when it changes. bids/asks: "price:size" pairs, best first.
-        CREATE TABLE IF NOT EXISTS book_snapshots (
-            token_id  TEXT NOT NULL,
-            ts        INTEGER NOT NULL,
-            market_id TEXT NOT NULL,
-            best_bid  REAL,
-            best_ask  REAL,
-            bid_size  REAL,
-            ask_size  REAL,
-            bids      TEXT NOT NULL,
-            asks      TEXT NOT NULL,
-            PRIMARY KEY (token_id, ts)
-        );
-
-        CREATE TABLE IF NOT EXISTS metar_live (
-            station_id   TEXT NOT NULL,
-            ts           INTEGER NOT NULL,
-            received_at  TEXT,
-            collected_at TEXT NOT NULL,
-            temp_c       REAL,
-            raw          TEXT,
-            PRIMARY KEY (station_id, ts)
-        );
-        """;
-
     public async Task UpsertCountEventsAsync(IEnumerable<CountEvent> events, CancellationToken ct = default)
     {
-        const string eventSql = """
-            INSERT INTO count_events (event_id, slug, series_id, title, created_at, end_date, closed, volume,
-                                      winning_market_id, description, updated_at)
-            VALUES (@EventId, @Slug, @SeriesId, @Title, @CreatedAt, @EndDate, @Closed, @Volume,
-                    @WinningMarketId, @Description, @UpdatedAt)
-            ON CONFLICT (event_id) DO UPDATE SET
-                slug = excluded.slug, series_id = excluded.series_id, title = excluded.title,
-                created_at = excluded.created_at, end_date = excluded.end_date, closed = excluded.closed,
-                volume = excluded.volume, winning_market_id = excluded.winning_market_id,
-                description = excluded.description, updated_at = excluded.updated_at;
-            """;
-        const string bucketSql = """
-            INSERT INTO count_buckets (market_id, event_id, position, condition_id, yes_token_id, no_token_id,
-                                       label, lower, upper, outcome, closed_time)
-            VALUES (@MarketId, @EventId, @Position, @ConditionId, @YesTokenId, @NoTokenId,
-                    @Label, @Lower, @Upper, @Outcome, @ClosedTime)
-            ON CONFLICT (market_id) DO UPDATE SET
-                position = excluded.position, label = excluded.label, lower = excluded.lower,
-                upper = excluded.upper, outcome = excluded.outcome, closed_time = excluded.closed_time;
-            """;
-
-        var now = DateTimeOffset.UtcNow.ToString("O");
-        await using var conn = await OpenAsync(ct);
-        await using var tx = await conn.BeginTransactionAsync(ct);
-        foreach (var e in events)
+        var now = DateTimeOffset.UtcNow;
+        var list = events.ToList();
+        var eventRows = list.Select(e => new CountEventRow
         {
-            await conn.ExecuteAsync(new CommandDefinition(eventSql, new
-            {
-                e.EventId,
-                e.Slug,
-                e.SeriesId,
-                e.Title,
-                CreatedAt = e.CreatedAt?.ToString("O"),
-                EndDate = e.EndDate?.ToString("O"),
-                e.Closed,
-                e.Volume,
-                WinningMarketId = e.WinningBucket?.MarketId,
-                e.Description,
-                UpdatedAt = now,
-            }, tx, cancellationToken: ct));
+            EventId = e.EventId,
+            Slug = e.Slug,
+            SeriesId = e.SeriesId,
+            Title = e.Title,
+            CreatedAt = e.CreatedAt,
+            EndDate = e.EndDate,
+            Closed = e.Closed,
+            Volume = (double?)e.Volume,
+            WinningMarketId = e.WinningBucket?.MarketId,
+            Description = e.Description,
+            UpdatedAt = now,
+        }).ToList();
+        var bucketRows = list.SelectMany(e => e.Buckets.Select((b, i) => new CountBucketRow
+        {
+            MarketId = b.MarketId,
+            EventId = e.EventId,
+            Position = i,
+            ConditionId = b.ConditionId,
+            YesTokenId = b.YesTokenId,
+            NoTokenId = b.NoTokenId,
+            Label = b.Label,
+            Lower = b.Lower,
+            Upper = b.Upper,
+            Outcome = b.Outcome,
+            ClosedTime = b.ClosedTime,
+        })).ToList();
 
-            await conn.ExecuteAsync(new CommandDefinition(bucketSql, e.Buckets.Select((b, i) => new
-            {
-                b.MarketId,
-                e.EventId,
-                Position = i,
-                b.ConditionId,
-                b.YesTokenId,
-                b.NoTokenId,
-                b.Label,
-                b.Lower,
-                b.Upper,
-                Outcome = b.Outcome.ToString(),
-                ClosedTime = b.ClosedTime?.ToString("O"),
-            }), tx, cancellationToken: ct));
-        }
-        await tx.CommitAsync(ct);
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        await UpsertAsync(db, db.CountEvents, eventRows, r => r.EventId, ids => r => ids.Contains(r.EventId), ct);
+        await UpsertAsync(db, db.CountBuckets, bucketRows, r => r.MarketId, ids => r => ids.Contains(r.MarketId), ct);
+        await db.SaveChangesAsync(ct);
     }
 
     /// <summary>Events still stored as open although their end date has passed, oldest first.</summary>
     public async Task<IReadOnlyList<string>> GetOpenEventSlugsAsync(CancellationToken ct = default)
     {
-        const string sql = """
-            SELECT slug FROM (
-                SELECT slug, end_date FROM events WHERE closed = 0 AND end_date < @Now
-                UNION ALL
-                SELECT slug, end_date FROM count_events WHERE closed = 0 AND end_date < @Now
-            ) ORDER BY end_date
-            """;
-        await using var conn = await OpenAsync(ct);
-        var rows = await conn.QueryAsync<string>(new CommandDefinition(sql, new { Now = DateTimeOffset.UtcNow.ToString("O") }, cancellationToken: ct));
-        return rows.ToList();
+        var now = DateTimeOffset.UtcNow;
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        var weather = await db.Events
+            .Where(e => !e.Closed && e.EndDate < now)
+            .Select(e => new { e.Slug, e.EndDate })
+            .ToListAsync(ct);
+        var counts = await db.CountEvents
+            .Where(e => !e.Closed && e.EndDate < now)
+            .Select(e => new { e.Slug, e.EndDate })
+            .ToListAsync(ct);
+        return weather.Concat(counts).OrderBy(e => e.EndDate).Select(e => e.Slug).ToList();
     }
 
     public async Task UpsertTrackingsAsync(IEnumerable<Tracking> trackings, CancellationToken ct = default)
     {
-        const string sql = """
-            INSERT INTO trackings (tracking_id, handle, title, period_start, period_end, market_slug, is_active)
-            VALUES (@Id, @Handle, @Title, @Start, @End, @MarketSlug, @IsActive)
-            ON CONFLICT (tracking_id) DO UPDATE SET title = excluded.title, period_start = excluded.period_start,
-                period_end = excluded.period_end, market_slug = excluded.market_slug, is_active = excluded.is_active;
-            """;
-        await using var conn = await OpenAsync(ct);
-        await conn.ExecuteAsync(new CommandDefinition(sql, trackings.Select(t => new
+        var rows = trackings.Select(t => new TrackingRow
         {
-            t.Id,
-            t.Handle,
-            t.Title,
-            Start = t.Start.ToString("O"),
-            End = t.End.ToString("O"),
+            TrackingId = t.Id,
+            Handle = t.Handle,
+            Title = t.Title,
+            PeriodStart = t.Start,
+            PeriodEnd = t.End,
             MarketSlug = t.MarketLink?.TrimEnd('/').Split('/').LastOrDefault(),
-            t.IsActive,
-        }), cancellationToken: ct));
+            IsActive = t.IsActive,
+        }).ToList();
+
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        await UpsertAsync(db, db.Trackings, rows, r => r.TrackingId, ids => r => ids.Contains(r.TrackingId), ct);
+        await db.SaveChangesAsync(ct);
     }
 
     public async Task<DateTimeOffset?> GetLastPostTimeAsync(string handle, CancellationToken ct = default)
     {
-        await using var conn = await OpenAsync(ct);
-        var value = await conn.ExecuteScalarAsync<string?>(new CommandDefinition(
-            "SELECT MAX(created_at) FROM posts WHERE handle = @handle", new { handle }, cancellationToken: ct));
-        return value is null ? null : DateTimeOffset.Parse(value, CultureInfo.InvariantCulture);
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        return await db.Posts
+            .Where(p => p.Handle == handle)
+            .OrderByDescending(p => p.CreatedAt)
+            .Select(p => (DateTimeOffset?)p.CreatedAt)
+            .FirstOrDefaultAsync(ct);
     }
 
     /// <summary>Stores posts not seen before; returns how many were new.</summary>
     public async Task<int> InsertPostsAsync(IEnumerable<TrackedPost> posts, DateTimeOffset collectedAt, CancellationToken ct = default)
     {
-        const string sql = """
-            INSERT INTO posts (platform_id, handle, created_at, imported_at, collected_at, content)
-            VALUES (@PlatformId, @Handle, @CreatedAt, @ImportedAt, @CollectedAt, @Content)
-            ON CONFLICT (platform_id) DO NOTHING;
-            """;
-        await using var conn = await OpenAsync(ct);
-        return await conn.ExecuteAsync(new CommandDefinition(sql, posts.Select(p => new
+        var rows = posts.Select(p => new PostRow
         {
-            p.PlatformId,
-            p.Handle,
-            CreatedAt = p.CreatedAt.ToString("O"),
-            ImportedAt = p.ImportedAt?.ToString("O"),
-            CollectedAt = collectedAt.ToString("O"),
-            p.Content,
-        }), cancellationToken: ct));
+            PlatformId = p.PlatformId,
+            Handle = p.Handle,
+            CreatedAt = p.CreatedAt,
+            ImportedAt = p.ImportedAt,
+            CollectedAt = collectedAt,
+            Content = p.Content,
+        }).ToList();
+
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        var added = await InsertNewAsync(db, db.Posts, rows, r => r.PlatformId, ids => r => ids.Contains(r.PlatformId), ct);
+        await db.SaveChangesAsync(ct);
+        return added;
     }
 
     /// <summary>
@@ -230,22 +129,23 @@ public sealed partial class WeatherDb
     /// </summary>
     public async Task<IReadOnlyList<BookToken>> GetActiveBookTokensAsync(DateOnly todayUtc, CancellationToken ct = default)
     {
-        const string sql = """
-            SELECT b.yes_token_id AS TokenId, b.market_id AS MarketId
-            FROM buckets b JOIN events e ON e.event_id = b.event_id
-            WHERE e.closed = 0 AND e.kind = 'Max' AND e.date BETWEEN @From AND @To
-            UNION ALL
-            SELECT b.yes_token_id, b.market_id
-            FROM count_buckets b JOIN count_events e ON e.event_id = b.event_id
-            WHERE e.closed = 0
-            """;
-        await using var conn = await OpenAsync(ct);
-        var rows = await conn.QueryAsync<BookToken>(new CommandDefinition(sql, new
-        {
-            From = todayUtc.AddDays(-1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-            To = todayUtc.AddDays(2).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-        }, cancellationToken: ct));
-        return rows.ToList();
+        var firstDay = todayUtc.AddDays(-1);
+        var lastDay = todayUtc.AddDays(2);
+
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        var weather = await (
+                from b in db.Buckets
+                join e in db.Events on b.EventId equals e.EventId
+                where !e.Closed && e.Kind == TemperatureKind.Max && e.Date >= firstDay && e.Date <= lastDay
+                select new BookToken(b.YesTokenId, b.MarketId))
+            .ToListAsync(ct);
+        var counts = await (
+                from b in db.CountBuckets
+                join e in db.CountEvents on b.EventId equals e.EventId
+                where !e.Closed
+                select new BookToken(b.YesTokenId, b.MarketId))
+            .ToListAsync(ct);
+        return [.. weather, .. counts];
     }
 
     public async Task SaveBookSnapshotsAsync(IReadOnlyCollection<BookSnapshot> snapshots, CancellationToken ct = default)
@@ -253,53 +153,68 @@ public sealed partial class WeatherDb
         if (snapshots.Count == 0)
             return;
 
-        const string sql = """
-            INSERT INTO book_snapshots (token_id, ts, market_id, best_bid, best_ask, bid_size, ask_size, bids, asks)
-            VALUES (@TokenId, @Ts, @MarketId, @BestBid, @BestAsk, @BidSize, @AskSize, @Bids, @Asks)
-            ON CONFLICT (token_id, ts) DO NOTHING;
-            """;
-        await using var conn = await OpenAsync(ct);
-        await using var tx = await conn.BeginTransactionAsync(ct);
-        await conn.ExecuteAsync(new CommandDefinition(sql, snapshots, tx, cancellationToken: ct));
-        await tx.CommitAsync(ct);
+        var rows = snapshots.Select(s => new BookSnapshotRow
+        {
+            TokenId = s.TokenId,
+            Ts = s.Ts,
+            MarketId = s.MarketId,
+            BestBid = (double?)s.BestBid,
+            BestAsk = (double?)s.BestAsk,
+            BidSize = (double?)s.BidSize,
+            AskSize = (double?)s.AskSize,
+            Bids = s.Bids,
+            Asks = s.Asks,
+        }).ToList();
+
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        foreach (var token in rows.GroupBy(r => r.TokenId))
+        {
+            var tokenId = token.Key;
+            await InsertNewAsync(db, db.BookSnapshots, token.ToList(), r => r.Ts,
+                ts => r => r.TokenId == tokenId && ts.Contains(r.Ts), ct);
+        }
+        await db.SaveChangesAsync(ct);
     }
 
     /// <summary>METAR stations of open weather markets whose local day is around now.</summary>
     public async Task<IReadOnlyList<string>> GetLiveStationsAsync(DateOnly todayUtc, CancellationToken ct = default)
     {
-        const string sql = """
-            SELECT DISTINCT station_id FROM events
-            WHERE closed = 0 AND station_id IS NOT NULL
-              AND source_kind IN ('NoaaTimeseries', 'WeatherUnderground')
-              AND date BETWEEN @From AND @To
-            ORDER BY station_id
-            """;
-        await using var conn = await OpenAsync(ct);
-        var rows = await conn.QueryAsync<string>(new CommandDefinition(sql, new
-        {
-            From = todayUtc.AddDays(-1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-            To = todayUtc.AddDays(1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-        }, cancellationToken: ct));
-        return rows.ToList();
+        var from = todayUtc.AddDays(-1);
+        var to = todayUtc.AddDays(1);
+
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        return await db.Events
+            .Where(e => !e.Closed && e.StationId != null
+                        && (e.SourceKind == ResolutionSourceKind.NoaaTimeseries || e.SourceKind == ResolutionSourceKind.WeatherUnderground)
+                        && e.Date >= from && e.Date <= to)
+            .Select(e => e.StationId!)
+            .Distinct()
+            .OrderBy(s => s)
+            .ToListAsync(ct);
     }
 
     /// <summary>Stores METARs not seen before; returns how many were new.</summary>
     public async Task<int> InsertLiveMetarsAsync(IEnumerable<LiveMetar> metars, DateTimeOffset collectedAt, CancellationToken ct = default)
     {
-        const string sql = """
-            INSERT INTO metar_live (station_id, ts, received_at, collected_at, temp_c, raw)
-            VALUES (@StationId, @Ts, @ReceivedAt, @CollectedAt, @TempC, @Raw)
-            ON CONFLICT (station_id, ts) DO NOTHING;
-            """;
-        await using var conn = await OpenAsync(ct);
-        return await conn.ExecuteAsync(new CommandDefinition(sql, metars.Select(m => new
+        var rows = metars.Select(m => new MetarLiveRow
         {
-            m.StationId,
+            StationId = m.StationId,
             Ts = m.ObservedAt.ToUnixTimeSeconds(),
-            ReceivedAt = m.ReceivedAt?.ToString("O"),
-            CollectedAt = collectedAt.ToString("O"),
-            m.TempC,
-            m.Raw,
-        }), cancellationToken: ct));
+            ReceivedAt = m.ReceivedAt,
+            CollectedAt = collectedAt,
+            TempC = m.TempC,
+            Raw = m.Raw,
+        }).ToList();
+
+        await using var db = await contextFactory.CreateDbContextAsync(ct);
+        var added = 0;
+        foreach (var station in rows.GroupBy(r => r.StationId))
+        {
+            var stationId = station.Key;
+            added += await InsertNewAsync(db, db.MetarLive, station.ToList(), r => r.Ts,
+                ts => r => r.StationId == stationId && ts.Contains(r.Ts), ct);
+        }
+        await db.SaveChangesAsync(ct);
+        return added;
     }
 }

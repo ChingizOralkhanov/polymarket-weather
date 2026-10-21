@@ -1,4 +1,4 @@
-using System.Globalization;
+using PolymarketWeather.Core.Markets;
 using PolymarketWeather.Core.Polymarket.Clob;
 using PolymarketWeather.Core.Storage;
 
@@ -12,7 +12,7 @@ public sealed class PricesBackfill(ClobClient clob, WeatherDb db, ILogger<Prices
 {
     private const int Parallelism = 4;
 
-    public async Task RunAsync(int fidelityMinutes, string? kind, IReadOnlyCollection<string> cities, CancellationToken ct)
+    public async Task RunAsync(int fidelityMinutes, TemperatureKind? kind, IReadOnlyCollection<string> cities, CancellationToken ct)
     {
         await db.EnsureSchemaAsync(ct);
         var pending = await db.GetPendingPriceFetchesAsync(kind, cities, ct);
@@ -45,14 +45,9 @@ public sealed class PricesBackfill(ClobClient clob, WeatherDb db, ILogger<Prices
 
     private static (DateTimeOffset From, DateTimeOffset To) GetRange(PendingPriceFetch p)
     {
-        var date = DateOnly.ParseExact(p.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture);
-        var dayStart = new DateTimeOffset(date.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
-
-        var from = TryParse(p.CreatedAt) ?? dayStart.AddDays(-3);
-        var to = TryParse(p.ClosedTime) ?? dayStart.AddDays(2);
+        var dayStart = new DateTimeOffset(p.Date.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        var from = p.CreatedAt ?? dayStart.AddDays(-3);
+        var to = p.ClosedTime ?? dayStart.AddDays(2);
         return (from.AddHours(-1), to.AddHours(1));
     }
-
-    private static DateTimeOffset? TryParse(string? value) =>
-        DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var t) ? t : null;
 }

@@ -28,15 +28,16 @@ builder.Services.AddHttpClient<AviationWeatherClient>(c =>
     c.Timeout = TimeSpan.FromSeconds(30);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("polymarket-weather-collector/0.1");
 });
-builder.Services.AddSingleton(_ => new WeatherDb(
+builder.Services.AddWeatherDb(
     builder.Configuration.GetConnectionString("Weather")
-    ?? throw new InvalidOperationException("ConnectionStrings:Weather is not configured")));
+    ?? throw new InvalidOperationException("ConnectionStrings:Weather is not configured"));
 builder.Services.Configure<CollectorOptions>(builder.Configuration.GetSection(CollectorOptions.Section));
 
 builder.Services.AddHostedService<MarketCollectorWorker>();
 builder.Services.AddHostedService<BookSnapshotWorker>();
 builder.Services.AddHostedService<PostsCollectorWorker>();
 builder.Services.AddHostedService<MetarCollectorWorker>();
+builder.Services.AddHostedService<WbPaperWorker>();
 
 var host = builder.Build();
 await host.Services.GetRequiredService<WeatherDb>().EnsureSchemaAsync();

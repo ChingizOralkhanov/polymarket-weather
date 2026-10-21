@@ -1,5 +1,6 @@
 using PolymarketWeather.Backfill;
 using PolymarketWeather.Core.Forecasts;
+using PolymarketWeather.Core.Markets;
 using PolymarketWeather.Core.Observations;
 using PolymarketWeather.Core.Polymarket.Clob;
 using PolymarketWeather.Core.Polymarket.Gamma;
@@ -35,9 +36,9 @@ builder.Services.AddHttpClient<OpenMeteoClient>(c =>
     c.BaseAddress = new Uri(OpenMeteoClient.PreviousRunsBaseAddress);
     c.Timeout = TimeSpan.FromMinutes(2);
 });
-builder.Services.AddSingleton(_ => new WeatherDb(
+builder.Services.AddWeatherDb(
     builder.Configuration.GetConnectionString("Weather")
-    ?? throw new InvalidOperationException("ConnectionStrings:Weather is not configured")));
+    ?? throw new InvalidOperationException("ConnectionStrings:Weather is not configured"));
 builder.Services.AddTransient<MarketsBackfill>();
 builder.Services.AddTransient<PricesBackfill>();
 builder.Services.AddTransient<ObservationsBackfill>();
@@ -57,7 +58,7 @@ switch (positional.FirstOrDefault())
 
     case "prices":
         var fidelity = options.TryGetValue("fidelity", out var f) ? int.Parse(f) : 10;
-        var kind = options.GetValueOrDefault("kind");
+        TemperatureKind? kind = options.TryGetValue("kind", out var k) ? Enum.Parse<TemperatureKind>(k, ignoreCase: true) : null;
         var cities = options.TryGetValue("cities", out var c)
             ? c.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             : [];
