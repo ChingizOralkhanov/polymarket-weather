@@ -5,7 +5,10 @@ namespace PolymarketWeather.Core.Storage;
 
 public sealed record WbBucket(string MarketId, string Label, int Upper, string YesTokenId, string NoTokenId);
 
-/// <summary>An open daily-max event whose station is watched by strategy W-B, with buckets not signalled yet.</summary>
+/// <summary>
+/// An open daily-max event whose station is watched by strategy W-B, with the buckets not signalled yet
+/// and its lowest ("or below") bucket, signalled or not.
+/// </summary>
 public sealed record WbCandidate(
     string EventId,
     string City,
@@ -13,6 +16,7 @@ public sealed record WbCandidate(
     DateOnly Date,
     TemperatureUnit Unit,
     string TimeZone,
+    WbBucket? Lowest,
     IReadOnlyList<WbBucket> Buckets);
 
 public sealed record LiveTemperature(long Ts, double TempC, DateTimeOffset? ReceivedAt);
@@ -33,17 +37,24 @@ public sealed partial class WeatherDb
                 where !e.Closed && e.Kind == TemperatureKind.Max && e.Date >= firstDay && e.Date <= lastDay
                       && (e.SourceKind == ResolutionSourceKind.NoaaTimeseries || e.SourceKind == ResolutionSourceKind.WeatherUnderground)
                       && b.Upper != null
-                      && !db.WbSignals.Any(w => w.MarketId == b.MarketId)
-                select new { e.EventId, e.City, s.StationId, e.Date, e.Unit, s.TimeZone, b.MarketId, b.Label, Upper = b.Upper!.Value, b.YesTokenId, b.NoTokenId })
+                select new
+                {
+                    e.EventId, e.City, s.StationId, e.Date, e.Unit, s.TimeZone,
+                    b.MarketId, b.Label, Upper = b.Upper!.Value, IsLowest = b.Lower == null, b.YesTokenId, b.NoTokenId,
+                    Signalled = db.WbSignals.Any(w => w.MarketId == b.MarketId),
+                })
             .ToListAsync(ct);
 
         return rows
             .GroupBy(r => r.EventId)
+            .Where(g => g.Any(b => !b.Signalled))
             .Select(g =>
             {
                 var e = g.First();
+                var lowest = g.FirstOrDefault(b => b.IsLowest);
                 return new WbCandidate(e.EventId, e.City, e.StationId, e.Date, e.Unit, e.TimeZone,
-                    g.Select(b => new WbBucket(b.MarketId, b.Label, b.Upper, b.YesTokenId, b.NoTokenId)).ToList());
+                    lowest is null ? null : new WbBucket(lowest.MarketId, lowest.Label, lowest.Upper, lowest.YesTokenId, lowest.NoTokenId),
+                    g.Where(b => !b.Signalled).Select(b => new WbBucket(b.MarketId, b.Label, b.Upper, b.YesTokenId, b.NoTokenId)).ToList());
             })
             .ToList();
     }

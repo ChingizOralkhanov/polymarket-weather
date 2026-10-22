@@ -15,7 +15,9 @@ public sealed class MetarCollectorWorker(
     private const int LookbackHours = 3;
 
     // The first cycle after a start covers a whole local day, so the daily max (strategy W-B) starts complete.
+    // Smaller batches keep that larger request under the API gateway timeout.
     private const int StartupLookbackHours = 30;
+    private const int StartupBatchSize = 10;
 
     private bool _started;
 
@@ -28,7 +30,7 @@ public sealed class MetarCollectorWorker(
         var hours = _started ? LookbackHours : StartupLookbackHours;
 
         var added = 0;
-        foreach (var batch in stations.Chunk(BatchSize))
+        foreach (var batch in stations.Chunk(_started ? BatchSize : StartupBatchSize))
             added += await db.InsertLiveMetarsAsync(await aviationWeather.GetMetarsAsync(batch, hours, ct), now, ct);
         _started = true;
 

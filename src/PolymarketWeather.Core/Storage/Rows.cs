@@ -181,6 +181,9 @@ public sealed class WbSignalRow
     public double? NoBestAsk { get; set; }
     public double? NoAskSize { get; set; }
     public required string NoAsks { get; set; }
+
+    /// <summary>Why this signal would not be traded, e.g. the crowd expects a "no data" resolution; null if tradable.</summary>
+    public string? SkipReason { get; set; }
 }
 
 public sealed class MetarLiveRow
