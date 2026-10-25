@@ -651,10 +651,6 @@ namespace PolymarketWeather.Core.Storage.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("observed_max");
 
-                    b.Property<string>("SkipReason")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("skip_reason");
-
                     b.Property<string>("StationId")
                         .IsRequired()
                         .HasColumnType("TEXT")
@@ -663,6 +659,10 @@ namespace PolymarketWeather.Core.Storage.Migrations
                     b.Property<int>("Upper")
                         .HasColumnType("INTEGER")
                         .HasColumnName("upper");
+
+                    b.Property<string>("Warning")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("warning");
 
                     b.Property<double?>("YesBestBid")
                         .HasColumnType("REAL")

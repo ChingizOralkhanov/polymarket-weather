@@ -67,7 +67,7 @@ public sealed class WbPaperWorker(
         {
             var yesBid = books.GetValueOrDefault(d.Bucket.YesTokenId)?.BestBids.FirstOrDefault();
             var noAsks = books.GetValueOrDefault(d.Bucket.NoTokenId)?.BestAsks.Take(Depth).ToList() ?? [];
-            var skipReason = SuspectNoDataResolution(d.Event, d.Max, books);
+            var warning = SuspectNoDataResolution(d.Event, d.Max, books);
             return new WbSignalRow
             {
                 MarketId = d.Bucket.MarketId,
@@ -86,7 +86,7 @@ public sealed class WbPaperWorker(
                 NoBestAsk = (double?)noAsks.FirstOrDefault()?.Price,
                 NoAskSize = (double?)noAsks.FirstOrDefault()?.Size,
                 NoAsks = string.Join(';', noAsks.Select(l => string.Create(CultureInfo.InvariantCulture, $"{l.Price}:{l.Size}"))),
-                SkipReason = skipReason,
+                Warning = warning,
             };
         }).ToList();
 
@@ -94,22 +94,17 @@ public sealed class WbPaperWorker(
 
         // A dead bucket whose No still sells below 99c is a would-be trade.
         var cheap = signals.Where(s => s.NoBestAsk is < 0.99).ToList();
-        logger.LogInformation("W-B: {Dead} dead buckets recorded, {Cheap} with No below 99c, {Skipped} skipped",
-            signals.Count, cheap.Count(s => s.SkipReason is null), cheap.Count(s => s.SkipReason is not null));
+        logger.LogInformation("W-B: {Dead} dead buckets recorded, {Cheap} with No below 99c ({Warned} with a warning)",
+            signals.Count, cheap.Count, cheap.Count(s => s.Warning is not null));
         foreach (var s in cheap)
-        {
-            if (s.SkipReason is null)
-                logger.LogInformation("W-B would buy No: {City} {Date} [{Label}] METAR max {Max}, No ask {Ask} x {Size}",
-                    s.City, s.Date, s.Label, s.ObservedMax, s.NoBestAsk, s.NoAskSize);
-            else
-                logger.LogInformation("W-B skip: {City} {Date} [{Label}] No ask {Ask}: {Reason}",
-                    s.City, s.Date, s.Label, s.NoBestAsk, s.SkipReason);
-        }
+            logger.LogInformation("W-B would buy No: {City} {Date} [{Label}] METAR max {Max}, No ask {Ask} x {Size}{Warning}",
+                s.City, s.Date, s.Label, s.ObservedMax, s.NoBestAsk, s.NoAskSize, s.Warning is null ? "" : $"; warning: {s.Warning}");
     }
 
     /// <summary>
     /// When neither NOAA nor Weather Underground has data, the market resolves to its lowest bracket. If METAR has
-    /// already passed that bracket but the crowd still prices it high, the crowd expects exactly that: skip the event.
+    /// already passed that bracket but the crowd still prices it high, the crowd may expect exactly that. Only a
+    /// warning: on Istanbul 21-22.10 the crowd was wrong and the real temperature resolved the market.
     /// </summary>
     private static string? SuspectNoDataResolution(WbCandidate e, int observedMax, IReadOnlyDictionary<string, OrderBook> books)
     {
