@@ -40,7 +40,7 @@ public sealed class WbPaperWorker(
             LiveTemperature? maxMetar = null;
             foreach (var m in metars)
             {
-                var value = Round(e.Unit == TemperatureUnit.Fahrenheit ? m.TempC * 9 / 5 + 32 : m.TempC);
+                var value = ResolutionRounding.ToBucketValue(m.TempC, e.Unit);
                 if (value > runningMax)
                     (runningMax, maxMetar) = (value, m);
             }
@@ -117,5 +117,4 @@ public sealed class WbPaperWorker(
             : null;
     }
 
-    private static int Round(double value) => (int)Math.Round(value, MidpointRounding.AwayFromZero);
 }

@@ -150,7 +150,7 @@ public sealed partial class WeatherDb(IDbContextFactory<WeatherDbContext> contex
         await using var db = await contextFactory.CreateDbContextAsync(ct);
         var rows = await db.Events
             .Where(e => e.StationId != null
-                        && (e.SourceKind == ResolutionSourceKind.NoaaTimeseries || e.SourceKind == ResolutionSourceKind.WeatherUnderground))
+                        && ResolutionSources.MetarBased.Contains(e.SourceKind))
             .Select(e => new { StationId = e.StationId!, e.Date })
             .Distinct()
             .ToListAsync(ct);

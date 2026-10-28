@@ -152,3 +152,28 @@ public class TemperatureMarketParserSourceTests
         Assert.Equal("KORD", te.StationId);
     }
 }
+
+public class TemperatureMarketParserMetarSourceTests
+{
+    [Theory]
+    [InlineData("highest-temperature-in-nyc-on-october-29-2026", "https://aviationweather.gov/api/data/metar?ids=KLGA&format=raw&date=2026-10-30T07:00:00Z&hours=30",
+        "... Each market in this event states its range in whole degrees Fahrenheit. ...", "KLGA", TemperatureUnit.Fahrenheit)]
+    [InlineData("highest-temperature-in-london-on-october-29-2026", "https://aviationweather.gov/api/data/metar?ids=EGLC&format=raw&date=2026-10-30T03:00:00Z&hours=30",
+        "... Each market in this event states its range in whole degrees Celsius. ... the Weather Underground Daily Observations table will be used ...", "EGLC", TemperatureUnit.Celsius)]
+    public void ParsesAviationWeatherSource(string slug, string resolutionSource, string description, string station, TemperatureUnit unit)
+    {
+        var ev = new GammaEvent
+        {
+            Slug = slug,
+            CreatedAt = DateTimeOffset.Parse("2026-10-27T06:55:42Z"),
+            ResolutionSource = resolutionSource,
+            Description = description,
+            Markets = [],
+        };
+
+        Assert.True(TemperatureMarketParser.TryParse(ev, out var te, out var error), error);
+        Assert.Equal(ResolutionSourceKind.AviationWeatherMetar, te!.SourceKind);
+        Assert.Equal(station, te.StationId);
+        Assert.Equal(unit, te.Unit);
+    }
+}

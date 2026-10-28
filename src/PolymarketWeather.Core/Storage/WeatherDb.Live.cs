@@ -185,7 +185,7 @@ public sealed partial class WeatherDb
         await using var db = await contextFactory.CreateDbContextAsync(ct);
         return await db.Events
             .Where(e => !e.Closed && e.StationId != null
-                        && (e.SourceKind == ResolutionSourceKind.NoaaTimeseries || e.SourceKind == ResolutionSourceKind.WeatherUnderground)
+                        && ResolutionSources.MetarBased.Contains(e.SourceKind)
                         && e.Date >= from && e.Date <= to)
             .Select(e => e.StationId!)
             .Distinct()

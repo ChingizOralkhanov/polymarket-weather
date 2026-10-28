@@ -14,6 +14,10 @@ public static partial class TemperatureMarketParser
     [GeneratedRegex(@"timeseries\?site=(?<id>[A-Za-z0-9]{3,5})")]
     private static partial Regex NoaaSiteRegex();
 
+    // Since late October 2026: "https://aviationweather.gov/api/data/metar?ids=KLGA&format=raw&..."
+    [GeneratedRegex(@"aviationweather\.gov/api/data/metar\?ids=(?<id>[A-Za-z0-9]{4})")]
+    private static partial Regex AviationWeatherRegex();
+
     // ".../history/daily/us/ny/new-york-city/KLGA" or ".../weather/KORD"
     [GeneratedRegex(@"wunderground\.com/[^\s""]*?/(?<id>[A-Z][A-Z0-9]{3})\b")]
     private static partial Regex WundergroundStationRegex();
@@ -123,6 +127,10 @@ public static partial class TemperatureMarketParser
     private static (ResolutionSourceKind, string?) ParseSource(string description, string? resolutionSource)
     {
         var text = $"{resolutionSource} {description}";
+        var metar = AviationWeatherRegex().Match(text);
+        if (metar.Success)
+            return (ResolutionSourceKind.AviationWeatherMetar, metar.Groups["id"].Value.ToUpperInvariant());
+
         var noaa = NoaaSiteRegex().Match(text);
         if (noaa.Success)
             return (ResolutionSourceKind.NoaaTimeseries, noaa.Groups["id"].Value.ToUpperInvariant());

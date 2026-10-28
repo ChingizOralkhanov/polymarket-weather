@@ -4,7 +4,16 @@ public enum TemperatureKind { Max, Min }
 
 public enum TemperatureUnit { Celsius, Fahrenheit }
 
-public enum ResolutionSourceKind { NoaaTimeseries, HongKongObservatory, WeatherUnderground, Unknown }
+public enum ResolutionSourceKind { NoaaTimeseries, HongKongObservatory, WeatherUnderground, AviationWeatherMetar, Unknown }
+
+public static class ResolutionSources
+{
+    /// <summary>Sources whose value is derived from the station's METAR reports, so live METARs can track them.</summary>
+    public static readonly ResolutionSourceKind[] MetarBased =
+    [
+        ResolutionSourceKind.AviationWeatherMetar, ResolutionSourceKind.NoaaTimeseries, ResolutionSourceKind.WeatherUnderground,
+    ];
+}
 
 public enum BucketOutcome { Unresolved, Yes, No }
 

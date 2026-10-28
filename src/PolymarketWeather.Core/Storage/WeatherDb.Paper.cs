@@ -35,7 +35,7 @@ public sealed partial class WeatherDb
                 join s in db.Stations on e.StationId equals s.StationId
                 join b in db.Buckets on e.EventId equals b.EventId
                 where !e.Closed && e.Kind == TemperatureKind.Max && e.Date >= firstDay && e.Date <= lastDay
-                      && (e.SourceKind == ResolutionSourceKind.NoaaTimeseries || e.SourceKind == ResolutionSourceKind.WeatherUnderground)
+                      && ResolutionSources.MetarBased.Contains(e.SourceKind)
                       && b.Upper != null
                 select new
                 {
@@ -59,11 +59,14 @@ public sealed partial class WeatherDb
             .ToList();
     }
 
+    /// <summary>Routine METAR temperatures of a station in a time window, oldest first.</summary>
     public async Task<IReadOnlyList<LiveTemperature>> GetLiveTemperaturesAsync(string stationId, long fromTs, long toTs, CancellationToken ct = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(ct);
         var rows = await db.MetarLive
-            .Where(m => m.StationId == stationId && m.Ts >= fromTs && m.Ts < toTs && m.TempC != null)
+            // Special reports (SPECI) do not count towards the resolution value.
+            .Where(m => m.StationId == stationId && m.Ts >= fromTs && m.Ts < toTs && m.TempC != null
+                        && (m.Raw == null || !m.Raw.StartsWith("SPECI")))
             .OrderBy(m => m.Ts)
             .Select(m => new { m.Ts, m.TempC, m.ReceivedAt })
             .ToListAsync(ct);
