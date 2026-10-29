@@ -1,0 +1,22 @@
+# Grafana dashboard over the project's SQLite database.
+#   docker compose up -d     -> http://localhost:3000  (admin / admin on first login)
+services:
+  grafana:
+    image: grafana/grafana-oss:11.5.2
+    container_name: polymarket-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_INSTALL_PLUGINS: frser-sqlite-datasource 3.5.0
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/prexpect.json
+      GF_USERS_DEFAULT_THEME: dark
+    volumes:
+      # Read-write: SQLite in WAL mode needs to create its -shm file even for readers.
+      - ./data:/data
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-storage:/var/lib/grafana
+
+volumes:
+  grafana-storage:

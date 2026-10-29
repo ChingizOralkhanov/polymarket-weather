@@ -1,0 +1,122 @@
+{
+  "uid": "prexpect",
+  "title": "Prexpect — Polymarket weather",
+  "tags": ["polymarket"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "panels": [
+    {
+      "type": "row", "title": "Collector health", "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 1, "type": "stat", "title": "Last METAR, min ago",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "weather-sqlite" },
+      "fieldConfig": { "defaults": { "unit": "m", "decimals": 1,
+        "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 5 }, { "color": "red", "value": 15 } ] } } },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [ { "refId": "A", "queryType": "table",
+        "rawQueryText": "SELECT round((strftime('%s','now') - strftime('%s', max(collected_at))) / 60.0, 1) AS minutes FROM metar_live",
+        "queryText": "SELECT round((strftime('%s','now') - strftime('%s', max(collected_at))) / 60.0, 1) AS minutes FROM metar_live" } ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Last book snapshot, min ago",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "weather-sqlite" },
+      "fieldConfig": { "defaults": { "unit": "m", "decimals": 1,
+        "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 5 }, { "color": "red", "value": 15 } ] } } },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [ { "refId": "A", "queryType": "table",
+        "rawQueryText": "SELECT round((strftime('%s','now') - max(ts)) / 60.0, 1) AS minutes FROM book_snapshots",
+        "queryText": "SELECT round((strftime('%s','now') - max(ts)) / 60.0, 1) AS minutes FROM book_snapshots" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Markets refreshed, min ago",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "weather-sqlite" },
+      "fieldConfig": { "defaults": { "unit": "m", "decimals": 1,
+        "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 15 }, { "color": "red", "value": 30 } ] } } },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [ { "refId": "A", "queryType": "table",
+        "rawQueryText": "SELECT round((strftime('%s','now') - strftime('%s', max(updated_at))) / 60.0, 1) AS minutes FROM events",
+        "queryText": "SELECT round((strftime('%s','now') - strftime('%s', max(updated_at))) / 60.0, 1) AS minutes FROM events" } ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "W-B dead buckets (time range)",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "weather-sqlite" },
+      "options": { "colorMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [ { "refId": "A", "queryType": "table",
+        "rawQueryText": "SELECT count(*) AS dead FROM wb_signals WHERE CAST(strftime('%s', detected_at) AS INTEGER) BETWEEN $__unixEpochFrom() AND $__unixEpochTo()",
+        "queryText": "SELECT count(*) AS dead FROM wb_signals WHERE CAST(strftime('%s', detected_at) AS INTEGER) BETWEEN $__unixEpochFrom() AND $__unixEpochTo()" } ]
+    },
+    {
+      "id": 5, "type": "stat", "title": "W-B would buy: No < 99c (time range)",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "weather-sqlite" },
+      "fieldConfig": { "defaults": {
+        "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null }, { "color": "green", "value": 1 } ] } } },
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [ { "refId": "A", "queryType": "table",
+        "rawQueryText": "SELECT count(*) AS would_buy FROM wb_signals WHERE no_best_ask < 0.99 AND CAST(strftime('%s', detected_at) AS INTEGER) BETWEEN $__unixEpochFrom() AND $__unixEpochTo()",
+        "queryText": "SELECT count(*) AS would_buy FROM wb_signals WHERE no_best_ask < 0.99 AND CAST(strftime('%s', detected_at) AS INTEGER) BETWEEN $__unixEpochFrom() AND $__unixEpochTo()" } ]
+    },
+    {
+      "id": 6, "type": "stat", "title": "W-B median detection lag, min",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "weather-sqlite" },
+      "fieldConfig": { "defaults": { "unit": "m", "decimals": 1 } },
+      "options": { "colorMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [ { "refId": "A", "queryType": "table",
+        "rawQueryText": "WITH l AS (SELECT (julianday(detected_at) - julianday(datetime(metar_ts, 'unixepoch'))) * 1440 AS lag FROM wb_signals WHERE CAST(strftime('%s', detected_at) AS INTEGER) BETWEEN $__unixEpochFrom() AND $__unixEpochTo() AND (julianday(detected_at) - julianday(datetime(metar_ts, 'unixepoch'))) * 1440 <= 30) SELECT round(lag, 1) AS lag FROM l ORDER BY lag LIMIT 1 OFFSET (SELECT count(*) / 2 FROM l)",
+        "queryText": "WITH l AS (SELECT (julianday(detected_at) - julianday(datetime(metar_ts, 'unixepoch'))) * 1440 AS lag FROM wb_signals WHERE CAST(strftime('%s', detected_at) AS INTEGER) BETWEEN $__unixEpochFrom() AND $__unixEpochTo() AND (julianday(detected_at) - julianday(datetime(metar_ts, 'unixepoch'))) * 1440 <= 30) SELECT round(lag, 1) AS lag FROM l ORDER BY lag LIMIT 1 OFFSET (SELECT count(*) / 2 FROM l)" } ]
+    },
+    {
+      "type": "row", "title": "Strategy W-B: dead buckets after METAR", "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 }
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Dead buckets per hour",
+      "gridPos": { "h": 9, "w": 10, "x": 0, "y": 6 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "weather-sqlite" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60 } } },
+      "targets": [ { "refId": "A", "queryType": "time series", "timeColumns": ["time"],
+        "rawQueryText": "SELECT CAST(strftime('%s', strftime('%Y-%m-%d %H:00:00', detected_at)) AS INTEGER) AS time, count(*) AS dead_buckets, sum(no_best_ask < 0.99) AS no_below_99c FROM wb_signals WHERE CAST(strftime('%s', detected_at) AS INTEGER) BETWEEN $__unixEpochFrom() AND $__unixEpochTo() GROUP BY 1 ORDER BY 1",
+        "queryText": "SELECT CAST(strftime('%s', strftime('%Y-%m-%d %H:00:00', detected_at)) AS INTEGER) AS time, count(*) AS dead_buckets, sum(no_best_ask < 0.99) AS no_below_99c FROM wb_signals WHERE CAST(strftime('%s', detected_at) AS INTEGER) BETWEEN $__unixEpochFrom() AND $__unixEpochTo() GROUP BY 1 ORDER BY 1" } ]
+    },
+    {
+      "id": 8, "type": "table", "title": "Would-buy signals (No below 99c) with market outcome",
+      "gridPos": { "h": 9, "w": 14, "x": 10, "y": 6 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "weather-sqlite" },
+      "options": { "showHeader": true },
+      "targets": [ { "refId": "A", "queryType": "table",
+        "rawQueryText": "SELECT w.detected_at AS detected, w.city, w.date, w.label, w.observed_max AS metar_max, round((julianday(w.detected_at) - julianday(datetime(w.metar_ts, 'unixepoch'))) * 1440, 1) AS lag_min, w.no_best_ask AS no_ask, w.no_ask_size AS size, b.outcome AS yes_outcome, w.warning FROM wb_signals w JOIN buckets b ON b.market_id = w.market_id WHERE w.no_best_ask < 0.99 ORDER BY w.detected_at DESC LIMIT 200",
+        "queryText": "SELECT w.detected_at AS detected, w.city, w.date, w.label, w.observed_max AS metar_max, round((julianday(w.detected_at) - julianday(datetime(w.metar_ts, 'unixepoch'))) * 1440, 1) AS lag_min, w.no_best_ask AS no_ask, w.no_ask_size AS size, b.outcome AS yes_outcome, w.warning FROM wb_signals w JOIN buckets b ON b.market_id = w.market_id WHERE w.no_best_ask < 0.99 ORDER BY w.detected_at DESC LIMIT 200" } ]
+    },
+    {
+      "type": "row", "title": "Live data", "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 }
+    },
+    {
+      "id": 9, "type": "table", "title": "Latest METAR per station",
+      "gridPos": { "h": 12, "w": 14, "x": 0, "y": 16 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "weather-sqlite" },
+      "targets": [ { "refId": "A", "queryType": "table",
+        "rawQueryText": "SELECT m.station_id AS station, s.name, datetime(m.ts, 'unixepoch') AS observed_utc, m.temp_c, round((strftime('%s','now') - m.ts) / 60.0) AS age_min, substr(m.raw, 1, 90) AS raw FROM metar_live m JOIN (SELECT station_id, max(ts) AS ts FROM metar_live GROUP BY station_id) l ON l.station_id = m.station_id AND l.ts = m.ts LEFT JOIN stations s ON s.station_id = m.station_id ORDER BY m.station_id",
+        "queryText": "SELECT m.station_id AS station, s.name, datetime(m.ts, 'unixepoch') AS observed_utc, m.temp_c, round((strftime('%s','now') - m.ts) / 60.0) AS age_min, substr(m.raw, 1, 90) AS raw FROM metar_live m JOIN (SELECT station_id, max(ts) AS ts FROM metar_live GROUP BY station_id) l ON l.station_id = m.station_id AND l.ts = m.ts LEFT JOIN stations s ON s.station_id = m.station_id ORDER BY m.station_id" } ]
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "@elonmusk posts per hour",
+      "gridPos": { "h": 12, "w": 10, "x": 14, "y": 16 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "weather-sqlite" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60 } } },
+      "targets": [ { "refId": "A", "queryType": "time series", "timeColumns": ["time"],
+        "rawQueryText": "SELECT CAST(strftime('%s', strftime('%Y-%m-%d %H:00:00', created_at)) AS INTEGER) AS time, count(*) AS posts FROM posts WHERE handle = 'elonmusk' AND CAST(strftime('%s', created_at) AS INTEGER) BETWEEN $__unixEpochFrom() AND $__unixEpochTo() GROUP BY 1 ORDER BY 1",
+        "queryText": "SELECT CAST(strftime('%s', strftime('%Y-%m-%d %H:00:00', created_at)) AS INTEGER) AS time, count(*) AS posts FROM posts WHERE handle = 'elonmusk' AND CAST(strftime('%s', created_at) AS INTEGER) BETWEEN $__unixEpochFrom() AND $__unixEpochTo() GROUP BY 1 ORDER BY 1" } ]
+    }
+  ]
+}

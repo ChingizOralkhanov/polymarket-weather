@@ -1,0 +1,9 @@
+apiVersion: 1
+
+datasources:
+  - name: Weather DB
+    uid: weather-sqlite
+    type: frser-sqlite-datasource
+    isDefault: true
+    jsonData:
+      path: /data/weather.db
