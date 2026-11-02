@@ -16,6 +16,7 @@ Results of each check are summarised in `docs/SPEC.md`.
 | `weather-tails.cs` | Calibration of cheap weather buckets (≤ 30c): win rate and ROI of buying them |
 | `wb-window.cs` | W-B under the METAR rules: minute prices of dead buckets around publication |
 | `wb-trades.cs` | Real trades against dead buckets, seconds relative to publication, who took them |
+| `metar-race.cs` | Which free source shows a new METAR first: `dotnet run metar-race.cs -- 180`, then `-- report` |
 | `heat-over.cs` | "The heat is over": rise of the daily max learned on 2016-2024 METARs vs market prices |
 | `musk-xtracker-lag.cs` | Does the post-count price move when xtracker imports late posts |
 | `musk-v0.cs` | Musk weekly markets: our count vs the winner, favourite at 90–99c, pace model vs market |
