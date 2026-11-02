@@ -24,5 +24,7 @@ Results of each check are summarised in `docs/SPEC.md`.
 | `musk-prexpect.cs` | Prexpect's closed positions by entry price and month |
 | `traders.cs` | Weather traders from public articles: P&L, buy prices, timing |
 | `trader-onlylucknobrain.cs` | One trader in detail: timing vs model runs, cities, resolved ROI |
+| `trader-onlyluck-history.cs` | The same trader over the whole history: closed and open positions, recent activity, effect of sells |
+| `weather-calibration.cs` | Yes and No of every price range at fixed horizons, split by period |
 | `sql.cs` | Ad-hoc read-only queries: `dotnet run sql.cs -- <db> "<sql>" ["<sql>" ...]` |
 | `dashcheck.cs` | Runs every query of a Grafana dashboard JSON against the database |
