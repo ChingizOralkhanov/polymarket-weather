@@ -14,6 +14,9 @@ Results of each check are summarised in `docs/SPEC.md`.
 | `wb-history.cs` | W-B on history: price of buckets already "dead" by METAR, 5–60 min after the observation |
 | `wb-paper-results.cs` | W-B live paper signals (`wb_signals`) against how the markets resolved |
 | `weather-tails.cs` | Calibration of cheap weather buckets (≤ 30c): win rate and ROI of buying them |
+| `wb-window.cs` | W-B under the METAR rules: minute prices of dead buckets around publication |
+| `wb-trades.cs` | Real trades against dead buckets, seconds relative to publication, who took them |
+| `heat-over.cs` | "The heat is over": rise of the daily max learned on 2016-2024 METARs vs market prices |
 | `musk-xtracker-lag.cs` | Does the post-count price move when xtracker imports late posts |
 | `musk-v0.cs` | Musk weekly markets: our count vs the winner, favourite at 90–99c, pace model vs market |
 | `musk-near-certain.cs` | How often 99–99.9c "near-certain" bets on Musk markets lost |
